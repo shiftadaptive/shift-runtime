@@ -5,6 +5,8 @@
 package engine
 
 import (
+	"errors"
+	"fmt"
 	"shift/internal/models"
 	"shift/internal/utils"
 
@@ -23,5 +25,18 @@ func ProcessRequest(req models.Request) (string, error) {
 		return "", err
 	}
 
+	if resp.StatusCode() >= 400 {
+		return handleFailure(req, resp.String())
+	}
+
 	return resp.String(), nil
+}
+
+func handleFailure(req models.Request, errorBody string) (string, error) {
+	fmt.Println("SHIFT detected failure")
+	fmt.Println("Error:", errorBody)
+
+	// CALL Python agent
+
+	return "", errors.New("external API request failed")
 }

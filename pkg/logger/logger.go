@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -19,12 +20,14 @@ var L *slog.Logger
 type BetterStackHandler struct {
 	endpoint string
 	token    string
+	service  string
 }
 
-func NewBetterStackHandler(endpoint, token string) *BetterStackHandler {
+func NewBetterStackHandler(endpoint, token, service string) *BetterStackHandler {
 	return &BetterStackHandler{
 		endpoint: endpoint,
 		token:    token,
+		service:  service,
 	}
 }
 
@@ -34,9 +37,10 @@ func (h *BetterStackHandler) Enabled(ctx context.Context, level slog.Level) bool
 
 func (h *BetterStackHandler) Handle(ctx context.Context, r slog.Record) error {
 	payload := map[string]interface{}{
-		"dt":      r.Time.UTC().Format("2006-01-02 15:04:05 UTC"),
-		"message": r.Message,
-		"level":   r.Level.String(),
+		"dt":           r.Time.UTC().Format("2006-01-02 15:04:05 UTC"),
+		"message":      r.Message,
+		"level":        r.Level.String(),
+		"service_name": h.service,
 	}
 
 	r.Attrs(func(a slog.Attr) bool {
@@ -78,11 +82,11 @@ func Init() {
 	endpoint := "https://s2322564.eu-fsn-3.betterstackdata.com"
 	token := os.Getenv("BETTERSTACK_TOKEN")
 
-	// Multi-handler: Console (JSON) + Better Stack
-	consoleHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug})
-	
+	// Multi-handler: Console (Custom format) + Better Stack
+	consoleHandler := &ConsoleHandler{opts: slog.HandlerOptions{Level: slog.LevelDebug}}
+
 	if token != "" {
-		remoteHandler := NewBetterStackHandler(endpoint, token)
+		remoteHandler := NewBetterStackHandler(endpoint, token, "Shift Runtime")
 		// We manually call both handlers to keep it simple without external dependencies
 		L = slog.New(&multiHandler{handlers: []slog.Handler{consoleHandler, remoteHandler}})
 	} else {
@@ -128,4 +132,31 @@ func (m *multiHandler) WithGroup(name string) slog.Handler {
 		newHandlers[i] = h.WithGroup(name)
 	}
 	return &multiHandler{newHandlers}
+}
+
+type ConsoleHandler struct {
+	opts slog.HandlerOptions
+}
+
+func (h *ConsoleHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	return level >= h.opts.Level.Level()
+}
+
+func (h *ConsoleHandler) Handle(ctx context.Context, r slog.Record) error {
+	attrs := ""
+	r.Attrs(func(a slog.Attr) bool {
+		attrs += fmt.Sprintf(" %s=%v", a.Key, a.Value.Any())
+		return true
+	})
+
+	fmt.Fprintf(os.Stdout, "[RUNTIME] %s%s\n", r.Message, attrs)
+	return nil
+}
+
+func (h *ConsoleHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return h
+}
+
+func (h *ConsoleHandler) WithGroup(name string) slog.Handler {
+	return h
 }

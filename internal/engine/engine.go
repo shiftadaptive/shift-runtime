@@ -7,9 +7,11 @@ package engine
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 
+	"shift/internal/cache"
 	"shift/internal/models"
 	"shift/internal/utils"
 
@@ -26,6 +28,8 @@ type AgentResponse struct {
 }
 
 func ProcessRequest(req models.Request) (string, error) {
+	applyCache(&req)
+
 	client := resty.New()
 
 	resp, err := client.R().
@@ -55,6 +59,8 @@ func handleFailure(req models.Request, errorMsg string) (string, error) {
 	}
 
 	slog.Info("Agent response received", "params", correction.Params)
+
+	storeMapping(req.Params, correction.Params)
 
 	req.Params = correction.Params
 
@@ -129,4 +135,25 @@ func extractErrorMessage(body string) string {
 	}
 
 	return body
+}
+
+func applyCache(req *models.Request) {
+	for key, value := range req.Params {
+		if mappedKey, exists := cache.GetMapping(key); exists {
+			slog.Info("Cache hit", "original", key, "mapped", mappedKey)
+			req.Params[mappedKey] = value
+			delete(req.Params, key)
+		}
+	}
+}
+
+func storeMapping(original map[string]interface{}, corrected map[string]interface{}) {
+	for oldKey, oldVal := range original {
+		for newKey, newVal := range corrected {
+			// Only map if keys are different but values are the same (indicates a rename)
+			if oldKey != newKey && fmt.Sprintf("%v", oldVal) == fmt.Sprintf("%v", newVal) {
+				cache.StoreMapping(oldKey, newKey)
+			}
+		}
+	}
 }

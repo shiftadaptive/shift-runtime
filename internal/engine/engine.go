@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"shift/internal/cache"
 	"shift/internal/models"
@@ -22,6 +23,7 @@ type AgentRequest struct {
 	Request   map[string]interface{} `json:"request"`
 	Error     string                 `json:"error"`
 	RequestID string                 `json:"requestId"`
+	Target    string                 `json:"target"`
 }
 
 type AgentResponse struct {
@@ -53,6 +55,13 @@ func ProcessRequest(req models.Request, requestID string) (string, error) {
 func handleFailure(req models.Request, errorMsg string, requestID string) (string, error) {
 	slog.Warn(fmt.Sprintf("[%s] SHIFT detected failure", requestID), "error", errorMsg)
 
+	// 🧠 Try heuristic fix before calling LLM
+	if corrected := tryHeuristicFix(req, errorMsg); corrected != nil {
+		slog.Info(fmt.Sprintf("[%s] Heuristic fix applied", requestID))
+		storeMapping(req.Params, corrected.Params)
+		return retryRequest(*corrected, requestID)
+	}
+
 	// 🔥 Call Python agent
 	correction, err := callAgent(req, errorMsg, requestID)
 	if err != nil {
@@ -68,6 +77,28 @@ func handleFailure(req models.Request, errorMsg string, requestID string) (strin
 	return retryRequest(req, requestID)
 }
 
+func tryHeuristicFix(req models.Request, errorMsg string) *models.Request {
+	// Detect "Parameter X is missing" pattern
+	if strings.Contains(errorMsg, "Parameter ") && strings.Contains(errorMsg, " is missing") {
+		// Extract the missing parameter name
+		start := strings.Index(errorMsg, "Parameter ") + len("Parameter ")
+		end := strings.Index(errorMsg, " is missing")
+		if start > 0 && end > start {
+			missingParam := errorMsg[start:end]
+
+			// Try to find a param that could be renamed
+			for key, val := range req.Params {
+				if key != missingParam && key != "key" {
+					req.Params[missingParam] = val
+					delete(req.Params, key)
+					return &req
+				}
+			}
+		}
+	}
+	return nil
+}
+
 func callAgent(req models.Request, errorMsg string, requestID string) (*AgentResponse, error) {
 	slog.Info(fmt.Sprintf("[%s] Calling agent for correction", requestID), "params", req.Params, "error", errorMsg)
 
@@ -77,6 +108,7 @@ func callAgent(req models.Request, errorMsg string, requestID string) (*AgentRes
 		},
 		Error:     errorMsg,
 		RequestID: requestID,
+		Target:    req.Target,
 	}
 
 	body, err := json.Marshal(payload)

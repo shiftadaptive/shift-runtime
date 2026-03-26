@@ -8,9 +8,10 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/google/uuid"
 	"shift/internal/engine"
 	"shift/internal/models"
+
+	"github.com/google/uuid"
 )
 
 func HandleRequest(w http.ResponseWriter, r *http.Request) {
@@ -30,5 +31,5 @@ func HandleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	w.Write([]byte(result))
 }

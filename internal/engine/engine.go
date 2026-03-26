@@ -5,13 +5,25 @@
 package engine
 
 import (
-	"errors"
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/http"
+
 	"shift/internal/models"
 	"shift/internal/utils"
 
 	"github.com/go-resty/resty/v2"
 )
+
+type AgentRequest struct {
+	Request map[string]interface{} `json:"request"`
+	Error   string                 `json:"error"`
+}
+
+type AgentResponse struct {
+	Params map[string]interface{} `json:"params"`
+}
 
 func ProcessRequest(req models.Request) (string, error) {
 	client := resty.New()
@@ -26,17 +38,97 @@ func ProcessRequest(req models.Request) (string, error) {
 	}
 
 	if resp.StatusCode() >= 400 {
-		return handleFailure(req, resp.String())
+		errorMessage := extractErrorMessage(resp.String())
+		return handleFailure(req, errorMessage)
 	}
 
 	return resp.String(), nil
 }
 
-func handleFailure(req models.Request, errorBody string) (string, error) {
+func handleFailure(req models.Request, errorMsg string) (string, error) {
 	fmt.Println("SHIFT detected failure")
-	fmt.Println("Error:", errorBody)
+	fmt.Println("Error:", errorMsg)
 
-	// CALL Python agent
+	// 🔥 Call Python agent
+	correction, err := callAgent(req, errorMsg)
+	if err != nil {
+		return "", err
+	}
 
-	return "", errors.New("external API request failed")
+	fmt.Println("Agent response:", correction.Params)
+
+	req.Params = correction.Params
+
+	return retryRequest(req)
+}
+
+func callAgent(req models.Request, errorMsg string) (*AgentResponse, error) {
+	fmt.Println("Calling agent with params:", req.Params)
+	fmt.Println("Error message:", errorMsg)
+
+	payload := AgentRequest{
+		Request: map[string]interface{}{
+			"params": req.Params,
+		},
+		Error: errorMsg,
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+
+	resp, err := http.Post(
+		"http://localhost:8000/correct",
+		"application/json",
+		bytes.NewBuffer(body),
+	)
+
+	if err != nil {
+		return nil, err
+	}
+
+	defer resp.Body.Close()
+
+	var result AgentResponse
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, err
+	}
+
+	return &result, nil
+}
+
+func retryRequest(req models.Request) (string, error) {
+	fmt.Println("Retrying with corrected params:", req.Params)
+
+	client := resty.New()
+
+	resp, err := client.R().
+		SetQueryParams(utils.ConvertParams(req.Params)).
+		SetBody(req.Body).
+		Execute(req.Method, req.Target)
+
+	if err != nil {
+		return "", err
+	}
+
+	return resp.String(), nil
+}
+
+func extractErrorMessage(body string) string {
+	var parsed map[string]interface{}
+
+	err := json.Unmarshal([]byte(body), &parsed)
+	if err != nil {
+		return body
+	}
+
+	if errObj, ok := parsed["error"].(map[string]interface{}); ok {
+		if msg, ok := errObj["message"].(string); ok {
+			return msg
+		}
+	}
+
+	return body
 }

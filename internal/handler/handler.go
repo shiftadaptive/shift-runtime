@@ -8,11 +8,14 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/google/uuid"
 	"shift/internal/engine"
 	"shift/internal/models"
 )
 
 func HandleRequest(w http.ResponseWriter, r *http.Request) {
+	requestID := uuid.New().String()
+
 	var req models.Request
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -20,7 +23,7 @@ func HandleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := engine.ProcessRequest(req)
+	result, err := engine.ProcessRequest(req, requestID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

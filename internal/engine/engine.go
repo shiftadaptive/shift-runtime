@@ -19,16 +19,17 @@ import (
 )
 
 type AgentRequest struct {
-	Request map[string]interface{} `json:"request"`
-	Error   string                 `json:"error"`
+	Request   map[string]interface{} `json:"request"`
+	Error     string                 `json:"error"`
+	RequestID string                 `json:"requestId"`
 }
 
 type AgentResponse struct {
 	Params map[string]interface{} `json:"params"`
 }
 
-func ProcessRequest(req models.Request) (string, error) {
-	applyCache(&req)
+func ProcessRequest(req models.Request, requestID string) (string, error) {
+	applyCache(&req, requestID)
 
 	client := resty.New()
 
@@ -43,38 +44,39 @@ func ProcessRequest(req models.Request) (string, error) {
 
 	if resp.StatusCode() >= 400 {
 		errorMessage := extractErrorMessage(resp.String())
-		return handleFailure(req, errorMessage)
+		return handleFailure(req, errorMessage, requestID)
 	}
 
 	return resp.String(), nil
 }
 
-func handleFailure(req models.Request, errorMsg string) (string, error) {
-	slog.Warn("SHIFT detected failure", "error", errorMsg)
+func handleFailure(req models.Request, errorMsg string, requestID string) (string, error) {
+	slog.Warn(fmt.Sprintf("[%s] SHIFT detected failure", requestID), "error", errorMsg)
 
 	// 🔥 Call Python agent
-	correction, err := callAgent(req, errorMsg)
+	correction, err := callAgent(req, errorMsg, requestID)
 	if err != nil {
 		return "", err
 	}
 
-	slog.Info("Agent response received", "params", correction.Params)
+	slog.Info(fmt.Sprintf("[%s] Agent response received", requestID), "params", correction.Params)
 
 	storeMapping(req.Params, correction.Params)
 
 	req.Params = correction.Params
 
-	return retryRequest(req)
+	return retryRequest(req, requestID)
 }
 
-func callAgent(req models.Request, errorMsg string) (*AgentResponse, error) {
-	slog.Info("Calling agent for correction", "params", req.Params, "error", errorMsg)
+func callAgent(req models.Request, errorMsg string, requestID string) (*AgentResponse, error) {
+	slog.Info(fmt.Sprintf("[%s] Calling agent for correction", requestID), "params", req.Params, "error", errorMsg)
 
 	payload := AgentRequest{
 		Request: map[string]interface{}{
 			"params": req.Params,
 		},
-		Error: errorMsg,
+		Error:     errorMsg,
+		RequestID: requestID,
 	}
 
 	body, err := json.Marshal(payload)
@@ -103,8 +105,8 @@ func callAgent(req models.Request, errorMsg string) (*AgentResponse, error) {
 	return &result, nil
 }
 
-func retryRequest(req models.Request) (string, error) {
-	slog.Info("Retrying request with corrected parameters", "params", req.Params)
+func retryRequest(req models.Request, requestID string) (string, error) {
+	slog.Info(fmt.Sprintf("[%s] Retrying request with corrected parameters", requestID), "params", req.Params)
 
 	client := resty.New()
 
@@ -137,10 +139,10 @@ func extractErrorMessage(body string) string {
 	return body
 }
 
-func applyCache(req *models.Request) {
+func applyCache(req *models.Request, requestID string) {
 	for key, value := range req.Params {
 		if mappedKey, exists := cache.GetMapping(key); exists {
-			slog.Info("Cache hit", "original", key, "mapped", mappedKey)
+			slog.Info(fmt.Sprintf("[%s] Cache hit", requestID), "original", key, "mapped", mappedKey)
 			req.Params[mappedKey] = value
 			delete(req.Params, key)
 		}

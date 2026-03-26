@@ -7,7 +7,7 @@ package engine
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
+	"log/slog"
 	"net/http"
 
 	"shift/internal/models"
@@ -46,8 +46,7 @@ func ProcessRequest(req models.Request) (string, error) {
 }
 
 func handleFailure(req models.Request, errorMsg string) (string, error) {
-	fmt.Println("SHIFT detected failure")
-	fmt.Println("Error:", errorMsg)
+	slog.Warn("SHIFT detected failure", "error", errorMsg)
 
 	// 🔥 Call Python agent
 	correction, err := callAgent(req, errorMsg)
@@ -55,7 +54,7 @@ func handleFailure(req models.Request, errorMsg string) (string, error) {
 		return "", err
 	}
 
-	fmt.Println("Agent response:", correction.Params)
+	slog.Info("Agent response received", "params", correction.Params)
 
 	req.Params = correction.Params
 
@@ -63,8 +62,7 @@ func handleFailure(req models.Request, errorMsg string) (string, error) {
 }
 
 func callAgent(req models.Request, errorMsg string) (*AgentResponse, error) {
-	fmt.Println("Calling agent with params:", req.Params)
-	fmt.Println("Error message:", errorMsg)
+	slog.Info("Calling agent for correction", "params", req.Params, "error", errorMsg)
 
 	payload := AgentRequest{
 		Request: map[string]interface{}{
@@ -100,7 +98,7 @@ func callAgent(req models.Request, errorMsg string) (*AgentResponse, error) {
 }
 
 func retryRequest(req models.Request) (string, error) {
-	fmt.Println("Retrying with corrected params:", req.Params)
+	slog.Info("Retrying request with corrected parameters", "params", req.Params)
 
 	client := resty.New()
 

@@ -5,13 +5,23 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"net/http"
+	"os"
 
+	"github.com/joho/godotenv"
 	"shift/internal/handler"
+	"shift/pkg/logger"
 )
 
 func main() {
+	err := godotenv.Load()
+	if err != nil {
+		slog.Warn("Error loading .env file, continuing with environment variables")
+	}
+
+	logger.Init()
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -23,9 +33,10 @@ func main() {
 		handler.HandleRequest(w, r)
 	})
 
-	log.Println("SHIFT running on :8080")
+	slog.Info("SHIFT running on :8080")
 
 	if err := http.ListenAndServe(":8080", mux); err != nil {
-		log.Fatalf("server failed: %v", err)
+		slog.Error("server failed", "error", err)
+		os.Exit(1)
 	}
 }
